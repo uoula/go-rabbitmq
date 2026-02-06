@@ -15,16 +15,12 @@ func main() {
 	// Get RabbitMQ URL from environment or use default
 	url := os.Getenv("RABBITMQ_URL")
 	if url == "" {
-		url = "amqp://guest:guest@localhost:5672/"
+		url = "amqp://user:password@localhost:5672/"
 	}
 
 	// Create connection with custom options
 	conn, err := rabbitmq.NewConnection(url,
-		rabbitmq.WithCustomQueueDeclare(&rabbitmq.QueueDeclareOptions{
-			Name:       "example-queue",
-			Durable:    true,
-			AutoDelete: false,
-		}),
+		rabbitmq.WithCustomQueueDeclare(rabbitmq.DefaultQueueOptions("example-queue")),
 		rabbitmq.WithCustomPublishOptions(&rabbitmq.PublishOptions{
 			Key: "example-queue",
 		}),

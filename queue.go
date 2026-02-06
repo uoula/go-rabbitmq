@@ -70,14 +70,13 @@ func DefaultQueueOptions(name string) *QueueDeclareOptions {
 	}
 }
 
-// DeclareQuorumQueue declares a queue, attempting quorum type first,
-// falling back to classic if 406 PRECONDITION_FAILED is returned
+// DeclareQuorumQueue declares a queue with the given options
+// If a 406 error occurs, the caller should handle channel recreation and fallback
 func DeclareQuorumQueue(ch *amqp.Channel, opts *QueueDeclareOptions) (amqp.Queue, error) {
 	if opts == nil {
 		return amqp.Queue{}, fmt.Errorf("queue options cannot be nil")
 	}
 
-	// First attempt: try with provided args (may include quorum type)
 	queue, err := ch.QueueDeclare(
 		opts.Name,
 		opts.Durable,
@@ -88,39 +87,8 @@ func DeclareQuorumQueue(ch *amqp.Channel, opts *QueueDeclareOptions) (amqp.Queue
 	)
 
 	if err != nil {
-		// Check if it's a 406 PRECONDITION_FAILED error
-		if amqpErr, ok := err.(*amqp.Error); ok && amqpErr.Code == 406 {
-			log.Printf("Quorum queue declaration failed (406), falling back to classic queue for: %s", opts.Name)
-
-			// Second attempt: try classic queue (remove x-queue-type)
-			classicArgs := amqp.Table{}
-			if opts.Args != nil {
-				for k, v := range opts.Args {
-					// Don't copy x-queue-type
-					if k != amqp.QueueTypeArg {
-						classicArgs[k] = v
-					}
-				}
-			}
-
-			queue, err = ch.QueueDeclare(
-				opts.Name,
-				opts.Durable,
-				opts.AutoDelete,
-				opts.Exclusive,
-				opts.NoWait,
-				classicArgs,
-			)
-
-			if err != nil {
-				return amqp.Queue{}, fmt.Errorf("failed to declare classic queue: %w", err)
-			}
-
-			log.Printf("Successfully declared classic queue: %s", opts.Name)
-			return queue, nil
-		}
-
-		return amqp.Queue{}, fmt.Errorf("failed to declare queue: %w", err)
+		// Return the error as-is, let caller handle 406 errors
+		return amqp.Queue{}, err
 	}
 
 	log.Printf("Successfully declared queue: %s", opts.Name)

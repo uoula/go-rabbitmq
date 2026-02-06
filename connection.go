@@ -194,9 +194,58 @@ func (c *Connection) connect() error {
 
 	// Declare queue if name is set
 	if c.queueOpts.Name != "" {
-		if _, err := DeclareQuorumQueue(pubCh, c.queueOpts); err != nil {
-			conn.Close()
-			return fmt.Errorf("failed to declare queue: %w", err)
+		_, err := DeclareQuorumQueue(pubCh, c.queueOpts)
+		if err != nil {
+			// Check if it's a 406 error - channel is closed, need to recreate
+			if amqpErr, ok := err.(*amqp.Error); ok && amqpErr.Code == 406 {
+				log.Printf("Channel closed due to 406 error, recreating channel for fallback attempt")
+
+				// Recreate the channel
+				pubCh, err = conn.Channel()
+				if err != nil {
+					conn.Close()
+					return fmt.Errorf("failed to recreate publisher channel: %w", err)
+				}
+				c.pubCh = pubCh
+
+				// Try again with classic queue (no x-queue-type)
+				classicOpts := &QueueDeclareOptions{
+					Name:       c.queueOpts.Name,
+					Durable:    c.queueOpts.Durable,
+					AutoDelete: c.queueOpts.AutoDelete,
+					Exclusive:  c.queueOpts.Exclusive,
+					NoWait:     c.queueOpts.NoWait,
+					Args:       amqp.Table{},
+				}
+
+				// Copy args except x-queue-type
+				if c.queueOpts.Args != nil {
+					for k, v := range c.queueOpts.Args {
+						if k != amqp.QueueTypeArg {
+							classicOpts.Args[k] = v
+						}
+					}
+				}
+
+				_, err = pubCh.QueueDeclare(
+					classicOpts.Name,
+					classicOpts.Durable,
+					classicOpts.AutoDelete,
+					classicOpts.Exclusive,
+					classicOpts.NoWait,
+					classicOpts.Args,
+				)
+
+				if err != nil {
+					conn.Close()
+					return fmt.Errorf("failed to declare classic queue after fallback: %w", err)
+				}
+
+				log.Printf("Successfully declared classic queue after fallback: %s", c.queueOpts.Name)
+			} else {
+				conn.Close()
+				return fmt.Errorf("failed to declare queue: %w", err)
+			}
 		}
 	}
 
